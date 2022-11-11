@@ -1,0 +1,5 @@
+numpy>=1.16.2
+EDFlib
+mne
+mne_bids
+scipy>=1.2.1
