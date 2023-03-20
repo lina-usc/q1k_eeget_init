@@ -1,7 +1,9 @@
 EDFlib
+EDFlib-Python
 ipykernel
 jupyter
 notebook
+mne-bids
 plotly
 setuptools==45
 wheel
