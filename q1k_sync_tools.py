@@ -4,30 +4,36 @@ import plotly.express as px
 
 
 def get_event_dict(raw,events):
-    #method for building building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
-    if raw.info.ch_names[-1] == 'VBeg':
-        print('VBeg method')
-        adjuster = len(raw.info.ch_names) - 129 - events[0,2] # this assumes that 'VBeg' is the last stim channel and the first event in the recording.
-        event_dict = {}
-        for i in range(129,len(raw.info.ch_names)):
-            event_dict[raw.info.ch_names[i]] = i-129 + 1 - adjuster
+    
+    stim_names = raw.copy().pick_types(stim=True).info['ch_names']
+    event_dict = {}
+    for i in range(0,len(stim_names)-1):
+        event_dict[stim_names[i]] = i + 1
 
-    if raw.info.ch_names[-1] == 'STI 014':
-        print('STI 014 method')
-        #adjuster = len(raw.info.ch_names) - 130 - events[1,2] # this assumes that 'STI 014' is the last stim channel and the first event in the recording.
-        event_dict = {}
-        for i in range(129,len(raw.info.ch_names)):
-            event_dict[raw.info.ch_names[i]] = i-129 + 1# - adjuster
+    ##method for building building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
+    #if raw.info.ch_names[-1] == 'VBeg':
+    #    print('VBeg method')
+    #    adjuster = len(raw.info.ch_names) - 129 - events[0,2] # this assumes that 'VBeg' is the last stim channel and the first event in the recording.
+    #    event_dict = {}
+    #    for i in range(129,len(raw.info.ch_names)):
+    #        event_dict[raw.info.ch_names[i]] = i-129 + 1 - adjuster
 
-    # check for dstr label and if found remove it
-    try:
-        event_dict['dstr']
-        print('found dstr label.. removing it')
-        del event_dict['dstr']
-        for k in event_dict:
-            event_dict[k] -= 1
-    except:
-        print('no dstr label found.. continuing')
+    #if raw.info.ch_names[-1] == 'STI 014':
+    #    print('STI 014 method')
+    #    #adjuster = len(raw.info.ch_names) - 130 - events[1,2] # this assumes that 'STI 014' is the last stim channel and the first event in the recording.
+    #    event_dict = {}
+    #   for i in range(129,len(raw.info.ch_names)):
+    #        event_dict[raw.info.ch_names[i]] = i-129 + 1# - adjuster
+
+    ## check for dstr label and if found remove it
+    #try:
+    #    event_dict['dstr']
+    #    print('found dstr label.. removing it')
+    #    del event_dict['dstr']
+    #    for k in event_dict:
+    #        event_dict[k] -= 1
+    #except:
+    #    print('no dstr label found.. continuing')
 
     return event_dict               
 
@@ -356,15 +362,19 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims):
     eeg_types = eeg_raw.copy().pick_types(eeg=True).get_channel_types()
     eeg_raw_array = eeg_raw.copy().pick_types(eeg=True).get_data()
 
-    et_names = et_raw.info['ch_names']
-    et_types = et_raw.get_channel_types()
-    et_raw_array = et_raw.get_data()
+    eeg_stim_names = eeg_raw.copy().pick_types(stim=True).info['ch_names']
+    eeg_stim_types = eeg_raw.copy().pick_types(stim=True).get_channel_types()
+    eeg_stim_raw_array = eeg_raw.copy().pick_types(stim=True).get_data()
 
-    eeg_et_array = np.vstack((eeg_raw_array, et_raw_array))
+    et_names = et_raw.copy().info['ch_names']
+    et_types = et_raw.copy().get_channel_types()
+    et_raw_array = et_raw.copy().get_data()
 
-    info = mne.create_info(ch_names = eeg_names + et_names,
+    eeg_et_array = np.vstack((eeg_raw_array, et_raw_array, eeg_stim_raw_array))
+
+    info = mne.create_info(ch_names = eeg_names + et_names + eeg_stim_names,
                     sfreq = 1000,
-                    ch_types=eeg_types + et_types )
+                    ch_types=eeg_types + et_types + eeg_stim_types)
 
     eeg_et_raw = mne.io.RawArray(eeg_et_array, info)
 
