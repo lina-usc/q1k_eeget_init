@@ -5,7 +5,7 @@ Initialization code for the EEG/ET data from the Q1K project.
 ```bash
 git clone https://github.com/lina-usc/q1k_eeget_init.git
 
-https://github.com/mne-tools/mne-python
+git clone https://github.com/mne-tools/mne-python
 ```
 
 ## do the installs, etc...
