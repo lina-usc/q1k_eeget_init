@@ -2,46 +2,52 @@ import mne
 import numpy as np
 import plotly.express as px
 
-
-def get_event_dict(raw,events):
-    
-    stim_names = raw.copy().pick_types(stim=True).info['ch_names']
-    event_dict = {}
-    for i in range(0,len(stim_names)-1):
-        event_dict[stim_names[i]] = i + 1
-
-    ##method for building building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
-    #if raw.info.ch_names[-1] == 'VBeg':
-    #    print('VBeg method')
-    #    adjuster = len(raw.info.ch_names) - 129 - events[0,2] # this assumes that 'VBeg' is the last stim channel and the first event in the recording.
-    #    event_dict = {}
-    #    for i in range(129,len(raw.info.ch_names)):
-    #        event_dict[raw.info.ch_names[i]] = i-129 + 1 - adjuster
-
-    #if raw.info.ch_names[-1] == 'STI 014':
-    #    print('STI 014 method')
-    #    #adjuster = len(raw.info.ch_names) - 130 - events[1,2] # this assumes that 'STI 014' is the last stim channel and the first event in the recording.
-    #    event_dict = {}
-    #   for i in range(129,len(raw.info.ch_names)):
-    #        event_dict[raw.info.ch_names[i]] = i-129 + 1# - adjuster
-
-    ## check for dstr label and if found remove it
-    #try:
-    #    event_dict['dstr']
-    #    print('found dstr label.. removing it')
-    #    del event_dict['dstr']
-    #    for k in event_dict:
-    #        event_dict[k] -= 1
-    #except:
-    #    print('no dstr label found.. continuing')
-
-    return event_dict               
+VALID_TASKS = ['rest', 'as', 'ssvep', 'vs', 'ssaep',
+               'go', 'plr', 'mmn', 'nsp', 'fsp']
 
 
-def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
+def get_event_dict(raw, events):
+
+    stim_names = raw.copy().pick('stim').info['ch_names']
+    event_dict = {event: int(i) + 1
+                  for i, event in enumerate(stim_names)
+                  if event != 'STI 014'}
+
+    """ #method for building building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
+    if raw.info.ch_names[-1] == 'VBeg':
+        print('VBeg method')
+        adjuster = len(raw.info.ch_names) - 129 - events[0,2] # this assumes that 'VBeg' is the last stim channel and the first event in the recording.
+        event_dict = {}
+        for i in range(129,len(raw.info.ch_names)):
+            event_dict[raw.info.ch_names[i]] = i-129 + 1 - adjuster
+
+    if raw.info.ch_names[-1] == 'STI 014':
+        print('STI 014 method')
+        #adjuster = len(raw.info.ch_names) - 130 - events[1,2] # this assumes that 'STI 014' is the last stim channel and the first event in the recording.
+        event_dict = {}
+       for i in range(129,len(raw.info.ch_names)):
+            event_dict[raw.info.ch_names[i]] = i-129 + 1# - adjuster
+
+    # check for dstr label and if found remove it
+    try:
+        event_dict['dstr']
+        print('found dstr label.. removing it')
+        del event_dict['dstr']
+        for k in event_dict:
+            event_dict[k] -= 1
+    except:
+        print('no dstr label found.. continuing')"""
+
+    return event_dict            
+
+
+def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
+    if not task_name:
+        raise ValueError(f'please pass one of {VALID_TASKS}'
+                         ' to the task_name keyword argument.')
 
     if task_name=='ssvep':
-        
+
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
@@ -69,7 +75,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
         eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    if task_name=='ssaep':
+    elif task_name == 'ssaep':
 
         # find the first DIN4 event following either ae06 or ae40 events and rename them
         for i, e in np.ndenumerate(eeg_events[:,2]):
@@ -92,42 +98,61 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
         #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
 
+    elif task_name == 'plr':
 
-    if task_name=='plr':
-        
-        #for the plr task it is more simple to select trials based on DIN2 occurences
+        # for the plr task it is more simple to select trials based on DIN2 occurences
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
-        #calculate the inter trial interval between stimulus onset DIN events
+        # calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
 
+    elif task_name == 'as':
+        """look for 'ddtr'>'DIN2' and 'ddtl'>'DIN2'"""
+        # 'ddtr': Distractor Target Right Onset
+        # Find ddtr events that have a DIN2 event immediately after.
+        ddtr_inds = np.where((eeg_events[:-1, 2] == eeg_event_dict['ddtr']) &
+                             (eeg_events[1:, 2] == eeg_event_dict['DIN2']))[0]
+        assert ddtr_inds.any(), 'Couldnt find any distractor event onsets'
+        # Change the Event code of the DIN event after the 'ddtr' event
+        # The code should now be a number like 28
+        eeg_events[ddtr_inds+1, 2] = len(eeg_event_dict) + 1
 
-    if task_name=='as':
-        #look for 'ddtr'>'DIN2' and 'ddtl'>'DIN2'
-        for i, e in np.ndenumerate(eeg_events[:,2]):
-            if e == eeg_event_dict['ddtr']:
-                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN2']:
-                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 1 #ae06 DIN onset
-            if e == eeg_event_dict['ddtl']:
-                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN2']:
-                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 2 #ae40 DIN onset
+        # 'ddtl': Distractor Target Left Onset
+        # Find ddtl events that have a DIN2 event immediately after.
+        ddtl_inds = np.where((eeg_events[:-1, 2] == eeg_event_dict['ddtl']) &
+                             (eeg_events[1:, 2] == eeg_event_dict['DIN2']))[0]
+        assert ddtl_inds.any(), 'Couldnt find any distractor left event onsets'
+        # Change the event code for the DIN event after the 'ddtl' event
+        # the code should now be a number like 29
+        eeg_events[ddtl_inds+1, 2] = len(eeg_event_dict) + 2
+
+        total_trials = len(ddtr_inds) + len(ddtl_inds)
+        if total_trials != 52:
+            print(f'There should be 52 trials, but got {total_trials}'
+                  ' distractor onsets')
 
         # add the new stimulus onset DIN labels to the event_dict..
         eeg_event_dict['ddtr_d'] = len(eeg_event_dict) + 1
         eeg_event_dict['ddtl_d'] = len(eeg_event_dict) + 1
 
-        #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['ddtr_d'],eeg_event_dict['ddtl_d']])
+        # select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:, 2],
+                       [eeg_event_dict['ddtr_d'], eeg_event_dict['ddtl_d']])
         eeg_stims = eeg_events[mask]
-        print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+        # the length of this array should equal the number of stimulus trials
+        # in the task
+        if len(eeg_stims) != 52:
+            print('There should be 52 DIN events in the AS task (for 52 '
+                  f'trials), but got {len(eeg_stims)}')
+        else:
+            print(f'Number of stimulus onset DIN events: {len(eeg_stims)}')
 
-        #calculate the inter trial interval between stimulus onset DIN events
-        eeg_iti = np.diff(eeg_stims[:,0])
+        # calculate the inter trial interval between stimulus onset DIN events
+        eeg_iti = np.diff(eeg_stims[:, 0])
 
-
-    if task_name=='go':
+    elif task_name == 'go':
 
         #look for 'dtoc'>'DIN2', 'dtbc'>'DIN2', 'dtgc'>'DIN2'
         for i, e in np.ndenumerate(eeg_events[:,2]):
@@ -146,7 +171,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
         eeg_event_dict['dtbc_d'] = len(eeg_event_dict) + 1
         eeg_event_dict['dtgc_d'] = len(eeg_event_dict) + 1
 
-        #select all of the newly categorized stimulus DIN events
+        # select all of the newly categorized stimulus DIN events
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['dtoc_d'],eeg_event_dict['dtbc_d'],eeg_event_dict['dtgc_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
@@ -155,7 +180,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
         eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    if task_name=='mmn':
+    elif task_name=='mmn':
         
         #for the plr task it is more simple to select trials based on DIN2 occurences
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN4']])
@@ -166,8 +191,8 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
         eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    if task_name=='rest':
-        
+    elif task_name=='rest':
+
         #for the plr task it is more simple to select trials based on DIN2 occurences
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
         eeg_stims = eeg_events[mask]
@@ -175,13 +200,18 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=''):
 
         #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
+    elif task_name in ['vs', 'fsp', 'nsp']:
+        raise NotImplemented
+    else:
+        raise ValueError('Could not determine task name.'
+                         f' Expected one of {VALID_TASKS} but got {task_name}')
 
 
     return eeg_events, eeg_stims, eeg_iti, eeg_event_dict
 
 
 def et_event_test(et_raw_df, task_name=''):
-    
+
     # fill NaNs in DIN channel with zeros
     et_raw_df['DIN']=et_raw_df['DIN'].fillna(0)
 
