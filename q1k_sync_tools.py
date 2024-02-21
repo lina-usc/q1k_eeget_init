@@ -3,13 +3,13 @@ import numpy as np
 import plotly.express as px
 
 VALID_TASKS = ['rest', 'as', 'ssvep', 'vs', 'ssaep',
-               'go', 'plr', 'mmn', 'nsp', 'fsp']
+               'go', 'plr', 'mn', 'nsp', 'fsp']
 
 
-def get_event_dict(raw, events):
+def get_event_dict(raw, events, offset):
 
     stim_names = raw.copy().pick('stim').info['ch_names']
-    event_dict = {event: int(i) + 1
+    event_dict = {event: int(i) + offset
                   for i, event in enumerate(stim_names)
                   if event != 'STI 014'}
 
@@ -42,6 +42,9 @@ def get_event_dict(raw, events):
 
 
 def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
+    
+    din_offset = []
+    
     if not task_name:
         raise ValueError(f'please pass one of {VALID_TASKS}'
                          ' to the task_name keyword argument.')
@@ -180,15 +183,44 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
         eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    elif task_name=='mmn':
+    elif task_name=='mn':
         
-        #for the plr task it is more simple to select trials based on DIN2 occurences
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN4']])
+        # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+        print('Removing TSYN events...')
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+        eeg_events = eeg_events[~mask]
+
+        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+        for i, e in np.ndenumerate(eeg_events[:,2]):
+            if e == eeg_event_dict['mmns']:
+                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
+                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 1 #mmns DIN onset
+                    din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+            if e == eeg_event_dict['mmnt']:
+                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
+                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 2 #mmnt DIN onset
+                    din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+        # add the new stimulus onset DIN labels to the event_dict..
+        eeg_event_dict['mmns_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['mmnt_d'] = len(eeg_event_dict) + 1
+
+        #select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['mmns_d'],eeg_event_dict['mmnt_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
         #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
+
+        
+        ##for the plr task it is more simple to select trials based on DIN2 occurences
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN4']])
+        #eeg_stims = eeg_events[mask]
+        #print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+
+        ##calculate the inter trial interval between stimulus onset DIN events
+        #eeg_iti = np.diff(eeg_stims[:,0])
 
 
     elif task_name=='rest':
@@ -207,7 +239,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
                          f' Expected one of {VALID_TASKS} but got {task_name}')
 
 
-    return eeg_events, eeg_stims, eeg_iti, eeg_event_dict
+    return eeg_events, eeg_stims, eeg_iti, din_offset, eeg_event_dict
 
 
 def et_event_test(et_raw_df, task_name=''):

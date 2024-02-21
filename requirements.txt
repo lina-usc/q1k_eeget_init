@@ -2,8 +2,10 @@ EDFlib
 EDFlib-Python
 ipykernel
 jupyter
-notebook
+matplotlib
 mne-bids
+notebook
+pandas
 plotly
 setuptools==45
 wheel
