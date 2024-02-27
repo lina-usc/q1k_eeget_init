@@ -33,7 +33,7 @@ open the q1k_eeget_init.ipynb in VSCode and follow the instructions..
 ## upload the BIDS raw data file to the remote cluster for pylossless processing...
 
 ```bash
-scp -r ~/q1k/pilot/q1k-external-pilot/sub-012 <username>@narval.computecanada.ca:/prject/def-emayada/q1k/pilot/q1k-external-pilot
+scp -r ~/q1k/pilot/q1k-external-pilot/sub-012 <username>@narval.computecanada.ca:/project/def-emayada/q1k/pilot/q1k-external-pilot
 
 ## running the pylossless pipeline on the raw BIDS session is handled by the q1k_pylossless package at... 
 
