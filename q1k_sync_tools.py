@@ -189,18 +189,30 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
         print('Removing TSYN events...')
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
         eeg_events = eeg_events[~mask]
+        new_events = np.empty((0, 3))
 
         # find the first DIN4 event following either mmns or mmnt events and add new *d events
         for i, e in np.ndenumerate(eeg_events[:,2]):
             if e == eeg_event_dict['mmns']:
-                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
-                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 1 #mmns DIN onset
-                    din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
+                        new_row = np.array([[eeg_events[i[0], 0], 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
             if e == eeg_event_dict['mmnt']:
-                if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
-                    eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 2 #mmnt DIN onset
-                    din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
+                        new_row = np.array([[eeg_events[i[0], 0], 0, len(eeg_event_dict) + 2]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+                        #eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 2 #mmnt DIN onset
+                        #new_events.append([eeg_events[i[0], 0], 0 , len(eeg_event_dict) + 2])
+                        #new_events = np.append(new_events,[eeg_events[i[0], 0], 0, len(eeg_event_dict) + 2], axis=0)
+                        #din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
 
+        # append new events to eeg_events
+        eeg_events = np.concatenate((eeg_events,new_events))
+        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
         # add the new stimulus onset DIN labels to the event_dict..
         eeg_event_dict['mmns_d'] = len(eeg_event_dict) + 1
         eeg_event_dict['mmnt_d'] = len(eeg_event_dict) + 1
@@ -239,7 +251,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, task_name=None):
                          f' Expected one of {VALID_TASKS} but got {task_name}')
 
 
-    return eeg_events, eeg_stims, eeg_iti, din_offset, eeg_event_dict
+    return eeg_events, eeg_stims, eeg_iti, din_offset, eeg_event_dict, new_events
 
 
 def et_event_test(et_raw_df, task_name=''):
