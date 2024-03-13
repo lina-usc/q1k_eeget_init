@@ -31,17 +31,14 @@ scp -r <username>@narval.computecanada.ca:/project/def-emayada/q1k/pilot/q1k-ext
 open the q1k_eeget_init.ipynb in VSCode and follow the instructions..
 
 ## upload the BIDS raw data file to the remote cluster for pylossless processing...
-### if it is the first task of the session being processed upload the entire folder... e.g.
+If it is the first task of the session being processed upload the entire folder... e.g.
 ```bash
 scp -r ~/q1k/pilot/q1k-external-pilot/sub-012 <username>@narval.computecanada.ca:/project/def-emayada/q1k/pilot/q1k-external-pilot
 ```
-### if the session already has a folder on the remote cluster just upload the specific files... e.g.
+ If the session already has a folder on the remote cluster just upload the specific files... e.g.
 ```bash
 scp -r ~/q1k/pilot/q1k-external-pilot/sub-012/ses-01/eeg/*_task-vp_* <username>@narval.computecanada.ca:/project/def-emayada/q1k/pilot/q1k-external-pilot/sub-012/ses-01/eeg
 scp -r ~/q1k/pilot/q1k-external-pilot/sub-012/ses-01/*_scans.tsv <username>@narval.computecanada.ca:/project/def-emayada/q1k/pilot/q1k-external-pilot/sub-012/ses-01
 ```
-
-
-
-## running the pylossless pipeline on the raw BIDS session is handled by the q1k_pylossless package at... 
+... then running the pylossless pipeline on the raw BIDS session is handled by the q1k_pylossless package at... 
 
