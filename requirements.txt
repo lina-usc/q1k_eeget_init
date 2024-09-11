@@ -1,11 +1,14 @@
 EDFlib
 EDFlib-Python
+edfio
 ipykernel
 jupyter
 matplotlib
 mne-bids
 notebook
+papermill
 pandas
 plotly
+seaborn
 setuptools==45
 wheel

@@ -49,7 +49,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         raise ValueError(f'please pass one of {VALID_TASKS}'
                          ' to the task_name keyword argument.')
 
-    if task_name == 'ap':
+    if task_name == 'ap' or task_name == 'AEP':
 
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
