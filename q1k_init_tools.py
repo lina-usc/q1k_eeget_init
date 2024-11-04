@@ -2,8 +2,8 @@ import mne
 import numpy as np
 import plotly.express as px
 
-VALID_TASKS = ['rest', 'as', 'ssvep', 'vs', 'ap',
-               'go', 'plr', 'mn', 'nsp', 'fsp']
+VALID_TASKS = ['rest', 'as', 'AS', 'ssvep', 'vp', 'VEP', 'vs', 'ap', 'AEP',
+               'go', 'GO', 'plr', 'mn', 'TO', 'nsp', 'fsp']
 
 
 def get_event_dict(raw, events, offset):
@@ -90,7 +90,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
 
     #elif task_name == 'go':
 
-    elif task_name=='go':
+    elif task_name=='go'or task_name == 'GO':
 
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
@@ -120,6 +120,27 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
                         new_events = np.append(new_events,new_row, axis=0)
                         din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
 
+
+            if e == eeg_event_dict['dsoc']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]]:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+            if e == eeg_event_dict['dsbc']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]]:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 2]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+            if e == eeg_event_dict['dsgc']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]]:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 2]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
         # append new events to eeg_events
         eeg_events = np.concatenate((eeg_events,new_events))
         eeg_events = eeg_events[eeg_events[:,0].argsort()] 
@@ -127,9 +148,12 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         eeg_event_dict['dtoc_d'] = len(eeg_event_dict) + 1
         eeg_event_dict['dtbc_d'] = len(eeg_event_dict) + 1
         eeg_event_dict['dtgc_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['dfoc_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['dfbc_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['dfgc_d'] = len(eeg_event_dict) + 1
 
         #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['dtoc_d'],eeg_event_dict['dtbc_d'],eeg_event_dict['dtgc_d']])
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['dtoc_d'],eeg_event_dict['dtbc_d'],eeg_event_dict['dtgc_d'],eeg_event_dict['dfoc_d'],eeg_event_dict['dfbc_d'],eeg_event_dict['dfgc_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
@@ -162,7 +186,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         #eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    elif task_name=='vp':
+    elif task_name == 'vp' or task_name == 'VEP':
 
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
@@ -210,7 +234,7 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         # calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
 
-    elif task_name == 'as':
+    elif task_name == 'as' or task_name == 'AS':
         
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
@@ -218,15 +242,18 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         eeg_events = eeg_events[~mask]
         new_events = np.empty((0, 3))
 
+        d_ind = [value for key, value in eeg_event_dict.items() if key.startswith('dd')]
+        t_ind = [value for key, value in eeg_event_dict.items() if key.startswith('dt')]
+
         # find the first DIN3 or DIN4 event following either mmns or mmnt events and add new *d events
         for i, e in np.ndenumerate(eeg_events[:,2]):
-            if e == eeg_event_dict['ddtr']:
+            if e in d_ind:
                 if i[0]+1 < len(eeg_events[:,2]):
                     if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]]:# or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
                         new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
                         new_events = np.append(new_events,new_row, axis=0)
                         din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
-            if e == eeg_event_dict['ddtl']:
+            if e in t_ind:
                 if i[0]+1 < len(eeg_events[:,2]):
                     if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]]:# or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
                         new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 2]])
@@ -237,11 +264,11 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         eeg_events = np.concatenate((eeg_events,new_events))
         eeg_events = eeg_events[eeg_events[:,0].argsort()] 
         # add the new stimulus onset DIN labels to the event_dict..
-        eeg_event_dict['ddtr_d'] = len(eeg_event_dict) + 1
-        eeg_event_dict['ddtl_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['dd_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['dt_d'] = len(eeg_event_dict) + 1
 
         #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['ddtr_d'],eeg_event_dict['ddtl_d']])
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['dd_d'],eeg_event_dict['dt_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
@@ -249,23 +276,26 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         eeg_iti = np.diff(eeg_stims[:,0])
         
 
-    elif task_name=='mn':
+    elif task_name=='mn' or task_name=='TO':
         
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
         eeg_events = eeg_events[~mask]
         new_events = np.empty((0, 3))
+        
+        s_ind = [value for key, value in eeg_event_dict.items() if key.startswith('SO')]
+        t_ind = [value for key, value in eeg_event_dict.items() if key.startswith('Dev')]
 
         # find the first DIN4 event following either mmns or mmnt events and add new *d events
         for i, e in np.ndenumerate(eeg_events[:,2]):
-            if e == eeg_event_dict['mmns']:
+            if e in s_ind:
                 if i[0]+1 < len(eeg_events[:,2]):
                     if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
                         new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
                         new_events = np.append(new_events,new_row, axis=0)
                         din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
-            if e == eeg_event_dict['mmnt']:
+            if e in t_ind:
                 if i[0]+1 < len(eeg_events[:,2]):
                     if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN4']:
                         new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 2]])
@@ -280,11 +310,11 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         eeg_events = np.concatenate((eeg_events,new_events))
         eeg_events = eeg_events[eeg_events[:,0].argsort()] 
         # add the new stimulus onset DIN labels to the event_dict..
-        eeg_event_dict['mmns_d'] = len(eeg_event_dict) + 1
-        eeg_event_dict['mmnt_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['to_s_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['to_t_d'] = len(eeg_event_dict) + 1
 
         #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['mmns_d'],eeg_event_dict['mmnt_d']])
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['to_s_d'],eeg_event_dict['to_t_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
