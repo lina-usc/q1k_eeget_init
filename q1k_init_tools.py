@@ -2,8 +2,8 @@ import mne
 import numpy as np
 import plotly.express as px
 
-VALID_TASKS = ['rest', 'as', 'AS', 'ssvep', 'vp', 'VEP', 'vs', 'ap', 'AEP',
-               'go', 'GO', 'plr', 'mn', 'TO', 'nsp', 'fsp']
+VALID_TASKS = ['rest', 'RS', 'as', 'AS', 'ssvep', 'vp', 'VEP', 'vs', 'ap', 'AEP',
+               'go', 'GO', 'plr', 'mn', 'TO', 'nsp', 'fsp', 'PLR']
 
 
 def get_event_dict(raw, events, offset):
@@ -224,15 +224,44 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
 
-    elif task_name == 'plr':
+    elif task_name == 'plr' or task_name == 'PLR':
 
-        # for the plr task it is more simple to select trials based on DIN2 occurences
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
+        # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+        print('Removing TSYN events...')
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+        eeg_events = eeg_events[~mask]
+        new_events = np.empty((0, 3))
+
+        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+        for i, e in np.ndenumerate(eeg_events[:,2]):
+            if e == eeg_event_dict['plro']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+        # append new events to eeg_events
+        eeg_events = np.concatenate((eeg_events,new_events))
+        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+        # add the new stimulus onset DIN labels to the event_dict..
+        eeg_event_dict['plro_d'] = len(eeg_event_dict) + 1
+
+        #select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['plro_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
-        # calculate the inter trial interval between stimulus onset DIN events
+        #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
+
+        ## for the plr task it is more simple to select trials based on DIN2 occurences
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
+        #eeg_stims = eeg_events[mask]
+        #print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+
+        ## calculate the inter trial interval between stimulus onset DIN events
+        #eeg_iti = np.diff(eeg_stims[:,0])
 
     elif task_name == 'as' or task_name == 'AS':
         
@@ -331,15 +360,59 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         #eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    elif task_name=='rest':
+    elif task_name=='rest' or task_name=='RS':
 
-        #for the plr task it is more simple to select trials based on DIN2 occurences
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
+        # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+        print('Removing TSYN events...')
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+        eeg_events = eeg_events[~mask]
+        new_events = np.empty((0, 3))
+        
+        v_ind = [value for key, value in eeg_event_dict.items() if key.startswith('vs')]
+        b_ind = [value for key, value in eeg_event_dict.items() if key.startswith('dbrk')]
+
+        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+        for i, e in np.ndenumerate(eeg_events[:,2]):
+            if e in v_ind:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN2']:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+            if e in b_ind:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict['DIN2']:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 2]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+                        #eeg_events[i[0]+1, 2] = len(eeg_event_dict) + 2 #mmnt DIN onset
+                        #new_events.append([eeg_events[i[0], 0], 0 , len(eeg_event_dict) + 2])
+                        #new_events = np.append(new_events,[eeg_events[i[0], 0], 0, len(eeg_event_dict) + 2], axis=0)
+                        #din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+        # append new events to eeg_events
+        eeg_events = np.concatenate((eeg_events,new_events))
+        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+        # add the new stimulus onset DIN labels to the event_dict..
+        eeg_event_dict['vs_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['brk_d'] = len(eeg_event_dict) + 1
+
+        #select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['vs_d'],eeg_event_dict['brk_d']])
         eeg_stims = eeg_events[mask]
         print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
         #calculate the inter trial interval between stimulus onset DIN events
         eeg_iti = np.diff(eeg_stims[:,0])
+
+        ##for the plr task it is more simple to select trials based on DIN2 occurences
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
+        #eeg_stims = eeg_events[mask]
+        #print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+
+        #calculate the inter trial interval between stimulus onset DIN events
+        #eeg_iti = np.diff(eeg_stims[:,0])
+        
     elif task_name in ['vs', 'fsp', 'nsp']:
         raise NotImplemented
     else:
