@@ -967,75 +967,6 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims, eeg_events, eeg_event_d
     eeg_raw.load_data()
     et_raw.load_data()
 
-    ##add eeg_events and eeg_event_dict back in to eeg_raw as annotations..
-    #eeg_event_dict_r = {value: key for key, value in eeg_event_dict.items()}
-    #eeg_annots = mne.annotations_from_events(
-    #    events=eeg_events,
-    #    event_desc=eeg_event_dict_r,
-    #    sfreq=eeg_raw.info["sfreq"],
-    #    orig_time=eeg_raw.info["meas_date"],
-    #)
-    #eeg_raw.set_annotations(eeg_annots)
-
-    #n_eeg_event_dict = len(eeg_event_dict)
-    #n_et_event_dict = {key: value + n_eeg_event_dict for key, value in et_event_dict.items()}
-
-    ##add et_events and et_event_dict back in to eeg_raw as annotations..
-    #et_event_dict_r = {value: key for key, value in et_event_dict.items()}
-    #et_annots = mne.annotations_from_events(
-    #    events=et_events,
-    #    event_desc=et_event_dict_r,
-    #    sfreq=et_raw.info["sfreq"],
-    #    orig_time=et_raw.info["meas_date"],
-    #)
-    #et_raw.set_annotations(et_annots)
-
-    ##append et_events to eeg_events
-    #eeg_et_events = np.vstack((eeg_events, et_events))
-    ##sort by the first column
-    #eeg_et_events_sorted = sorted(eeg_et_events, key=lambda x: x[0])
-
-    #eeg_event_dict_r = {value: key for key, value in eeg_event_dict.items()}
-    #eeg_annots = mne.annotations_from_events(
-    #    events=eeg_events,
-    #    event_desc=eeg_event_dict_r,
-    #    sfreq=eeg_raw.info["sfreq"],
-    #    orig_time=eeg_raw.info["meas_date"],
-    #)
-    #eeg_raw.set_annotations(eeg_annots)
-
-    ##rename the ET DIN events so they are distinguishable from the EEG DIN events
-    #et_event_dict = {
-    #    (f"et_{key}" if key.startswith('DIN') else key): value
-    #    for key, value in et_event_dict.items()
-    #}
-
-    ##add the eeg_event_dict row count to the values of et_event_dict
-    #eeg_event_count = len(eeg_event_dict)
-    #n_et_event_dict = {key: value + eeg_event_count for key, value in et_event_dict.items()}
-
-    #eeg_event_dict.update(n_et_event_dict)
-    #eeg_et_event_dict = eeg_event_dict
-
-    ##add the eeg_event_dict row count to the values of et_events[:,2]    
-    #et_events[:, 2] += eeg_event_count
-    ##append et_events to eeg_events
-    #eeg_et_events = np.vstack((eeg_events.astype(int), et_events.astype(int)))
-    ##sort by the first column
-    #eeg_et_events_sorted = np.array(sorted(eeg_et_events, key=lambda x: x[0]))
-
-    #eeg_et_event_dict_r = {value: key for key, value in eeg_et_event_dict.items()}
-
-    #eeg_et_annots = mne.annotations_from_events(
-    #    events=eeg_et_events_sorted,
-    #    event_desc=eeg_et_event_dict_r,
-    #    sfreq=eeg_raw.info["sfreq"],
-    #    orig_time=eeg_raw.info["meas_date"],
-    #)
-    #eeg_raw.set_annotations(eeg_et_annots)
-
-    
-    
     # Convert event onsets from samples to seconds
     eeg_times = eeg_stims[:, 0] / eeg_raw.info["sfreq"]
     et_times = et_stims[:, 0] / et_raw.info["sfreq"]
@@ -1046,13 +977,7 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims, eeg_events, eeg_event_d
     # Add EEG channels to the eye-tracking raw object
     eeg_raw.add_channels([et_raw], force_update_info=True)
 
-
-
-
-
-    #eeg_raw.load_data()
-    #et_raw.load_data()
-
+    # update the annotations...
     eeg_event_dict_r = {value: key for key, value in eeg_event_dict.items()}
     eeg_annots = mne.annotations_from_events(
         events=eeg_events,
@@ -1061,84 +986,6 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims, eeg_events, eeg_event_d
         orig_time=eeg_raw.info["meas_date"],
     )
     eeg_raw.set_annotations(eeg_annots)
-
-    #et_event_dict_r = {value: key for key, value in et_event_dict.items()}
-    #et_annots = mne.annotations_from_events(
-    #    events=et_events,
-    #    event_desc=et_event_dict_r,
-    #    sfreq=et_raw.info["sfreq"],
-    #    orig_time=et_raw.info["meas_date"],
-    #)
-    #et_raw.set_annotations(et_annots)
-
-    ## Convert event onsets from samples to seconds
-    #eeg_times = eeg_stims[:, 0] / eeg_raw.info["sfreq"]
-    #et_times = et_stims[:, 0] / et_raw.info["sfreq"]
-
-    ## Align the data
-    #mne.preprocessing.realign_raw(et_raw, eeg_raw, et_times, eeg_times, verbose="error")
-
-    ## Add EEG channels to the eye-tracking raw object
-    #et_raw.add_channels([eeg_raw], force_update_info=True)
-    ##del raw_eeg  # free up some memory
-    
-    ## Convert event onsets from samples to seconds
-    #et_times = et_stims[:, 0] / et_raw.info["sfreq"]
-    #eeg_times = eeg_stims[:, 0] / eeg_raw.info["sfreq"]
-
-    #et_raw.load_data()
-    #eeg_raw.load_data()
-    ## Align the data
-    #mne.preprocessing.realign_raw(eeg_raw, et_raw, eeg_times, et_times, verbose="error")
-
-    ## Add EEG channels to the eye-tracking raw object
-    #eeg_raw.add_channels([et_raw], force_update_info=True)
-    ##del eeg_raw  # free up some memory
-
-    #eeg_times = eeg_stims[:,0] / 1000#.astype(int)# * (1000/eeg_raw.info['sfreq'])
-    #et_times = et_stims[:,0]#.astype(int)# * (1000/et_raw.info['sfreq'])
-    #et_times=et_stims['time'].reset_index(drop=True).to_numpy()
-
-    # Convert event onsets from samples to seconds
-    #eeg_times = eeg_stims[:, 0] / eeg_raw.info["sfreq"]
-    #et_times = et_stims[:, 0] / et_raw.info["sfreq"]
-
-    #mne.preprocessing.realign_raw(et_raw, eeg_raw, et_times, eeg_times, verbose=None)
-
-    #eeg_names = eeg_raw.copy().pick_types(eeg=True).info['ch_names']
-    #eeg_types = eeg_raw.copy().pick_types(eeg=True).get_channel_types()
-    #eeg_raw_array = eeg_raw.copy().pick_types(eeg=True).get_data()
-
-    #eeg_stim_names = eeg_raw.copy().pick_types(stim=True).info['ch_names']
-    #eeg_stim_types = eeg_raw.copy().pick_types(stim=True).get_channel_types()
-    #eeg_stim_raw_array = eeg_raw.copy().pick_types(stim=True).get_data()
-
-    #et_names = et_raw.copy().info['ch_names']
-    #et_types = et_raw.copy().get_channel_types()
-    #et_raw_array = et_raw.copy().get_data()
-
-    #eeg_et_array = np.vstack((eeg_raw_array, et_raw_array, eeg_stim_raw_array))
-
-    #info = mne.create_info(ch_names = eeg_names + et_names + eeg_stim_names,
-    #                sfreq = 1000,
-    #                ch_types=eeg_types + et_types + eeg_stim_types)
-
-    #eeg_et_raw = mne.io.RawArray(eeg_et_array, info)
-    
-    #eeg_events_from_annot, eeg_event_dict = mne.events_from_annotations(eeg_raw)
-    #et_events_from_annot, et_event_dict = mne.events_from_annotations(et_raw)
-
-    #n_eeg_event_dict = len(eeg_event_dict)
-    #n_et_event_dict = {key: value + n_eeg_event_dict for key, value in et_event_dict.items()}
-
-    #n_et_event_dict
-    #eeg_event_dict.update(n_et_event_dict)
-    #eeg_et_event_dict = eeg_event_dict
-
-    ##append et_events to eeg_events
-    #eeg_et_events = np.vstack((eeg_events, et_events))
-    ##sort by the first column
-    #eeg_et_events_sorted = sorted(eeg_et_events, key=lambda x: x[0])
 
     return eeg_raw
 
