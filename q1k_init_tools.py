@@ -958,18 +958,101 @@ def et_task_events(et_raw_df, et_annot_event_dict, et_annot_events, task_id):
         #sort the array by the first column for clarity (optional)
         et_annot_events = et_annot_events[et_annot_events[:, 0].argsort()]
 
+    if task_id == 'PLR':
+        target_values = {et_annot_event_dict['STIM'], et_annot_event_dict['FIX'], et_annot_event_dict['ISI']}
+        #initialize results and tracking for pruning
+        result_events = []
+        pruned_indices = set()
+        #iterate through rows and apply pruning for target)values
+        for i, row in enumerate(et_annot_events):
+            if i in pruned_indices:
+                continue  #skip rows already excluded
+            if row[2] in target_values:
+                #add the first occurrence of target_values
+                result_events.append(row)
+                #exclude rows of the same type within +500 range
+                pruned_indices.update(
+                    j for j, other_row in enumerate(et_annot_events)
+                    #if abs(other_row[0] - row[0]) <= 500 and other_row[2] == row[2]
+                    if other_row[0] - row[0] <= 1000 and other_row[2] == row[2]
+                )
+            else:
+                #retain rows unrelated to target_values
+                result_events.append(row)
+        #convert results back to a numpy array
+        result_events = np.array(result_events)
+        et_annot_events=result_events
+
+        # add a new key for 'STIM_d' in the dictionary
+        stim_d_value = max(et_annot_event_dict.values()) + 1
+        et_annot_event_dict['STIM_d'] = stim_d_value
+
+        #process rows to handle 'DIN2' and 'DIN4' for each 'STIM'
+        new_rows = []
+        used_indices = set()  # To ensure only the first 'DIN2' or 'DIN4' is used
+
+        for stim_index, stim_row in enumerate(et_annot_events):
+            if stim_row[2] == et_annot_event_dict['STIM']:
+                stim_time = stim_row[0]  # First column of the 'STIM' row
+                stim_d_time = None
+
+                # Look for the first 'DIN2' within 1000 ms after this 'STIM'
+                for i in range(stim_index + 1, len(et_annot_events)):
+                    din2_row = et_annot_events[i]
+                    if (
+                        din2_row[2] == et_annot_event_dict['DIN2'] and
+                        i not in used_indices and
+                        0 <= din2_row[0] - stim_time <= 1000
+                    ):
+                        stim_d_time = din2_row[0]  # Use 'DIN2' time directly
+                        new_rows.append([stim_d_time, 0, stim_d_value])
+                        used_indices.add(i)
+                        break
+
+                # If no 'DIN2' is found, look for the first 'DIN4' and calculate midpoint if necessary
+                if stim_d_time is None:
+                    first_din4_time = None
+                    second_din4_time = None
+
+                    for i in range(stim_index + 1, len(et_annot_events)):
+                        din4_row = et_annot_events[i]
+                        if (
+                            din4_row[2] == et_annot_event_dict['DIN4'] and
+                            i not in used_indices and
+                            0 <= din4_row[0] - stim_time <= 1000
+                        ):
+                            stim_d_time = din4_row[0]  # Use 'DIN2' time directly
+                            new_rows.append([stim_d_time, 0, stim_d_value])
+                            used_indices.add(i)
+                            break
+
+                #         if first_din4_time is None:
+                #             first_din4_time = din4_row[0]
+                #             used_indices.add(i)
+                #         elif second_din4_time is None:
+                #             second_din4_time = din4_row[0]
+                #             break
+
+                ## If two DIN4s are found, calculate the midpoint
+                #if first_din4_time is not None and second_din4_time is not None:
+                #    stim_d_time = first_din4_time - (second_din4_time - first_din4_time) // 2
+                #    new_rows.append([stim_d_time, 0, stim_d_value])
+
+        #add the new rows to the existing events
+        et_annot_events = np.vstack([et_annot_events, new_rows])
+
+        #sort the array by the first column for clarity (optional)
+        et_annot_events = et_annot_events[et_annot_events[:, 0].argsort()]
+
+        
     return et_annot_event_dict, et_annot_events, et_raw_df
     
     
     
-def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims, eeg_events, eeg_event_dict, et_events, et_event_dict):
+def eeg_et_combine(eeg_raw, et_raw, eeg_times, et_times, eeg_events, eeg_event_dict, et_events, et_event_dict):
 
     eeg_raw.load_data()
     et_raw.load_data()
-
-    # Convert event onsets from samples to seconds
-    eeg_times = eeg_stims[:, 0] / eeg_raw.info["sfreq"]
-    et_times = et_stims[:, 0] / et_raw.info["sfreq"]
 
     # Align the data
     mne.preprocessing.realign_raw(eeg_raw, et_raw, eeg_times, et_times, verbose="error")
@@ -989,3 +1072,29 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_stims, et_stims, eeg_events, eeg_event_d
 
     return eeg_raw
 
+def times_align(a_times, b_times):
+
+    b_intervals = np.diff(b_times)
+
+    # Function to find the best index to remove
+    def find_best_index_to_remove(a_times, target_intervals):
+        min_deviation = float('inf')
+        best_index = None
+
+        for i in range(1, len(a_times) - 1):  # Skip first and last indices
+            modified_a_times = np.delete(a_times, i)  # Remove element at index i
+            modified_intervals = np.diff(modified_a_times)  # Compute new intervals
+            deviation = np.sum(np.abs(modified_intervals - target_intervals))  # Deviation from target
+            if deviation < min_deviation:
+                min_deviation = deviation
+                best_index = i  # Store the index with the smallest deviation
+
+        return best_index
+
+    # Find the best index to remove
+    index_to_remove = find_best_index_to_remove(a_times, b_intervals)
+    print("Index to remove:", index_to_remove)
+
+    a_times = np.delete(a_times, index_to_remove)
+    return a_times
+    
