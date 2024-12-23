@@ -1,6 +1,9 @@
 import mne
 import numpy as np
+import mne
+import mne_bids
 import plotly.express as px
+import os
 import re
 import glob
 
@@ -103,37 +106,48 @@ def din_check(event_dict, din_str):
     return din_str
 
 
-def et_read(path):
+def et_read(path,blink_interp,fill_nans,resamp):
 
     #read the asc eye tracking data and convert it to a dataframe...
     et_raw = mne.io.read_raw_eyelink(path)
     et_raw.load_data()
-    data = et_raw.get_data()
-    data[np.isnan(data)] = 0
-    et_raw._data = data
-    et_raw.resample(1000, npad="auto")
-    #et_raw_fresh=et_raw.copy() #make a fresh copy for later
-    et_raw_df = et_raw.to_data_frame()
-    #get the events from the annotation structure
-    et_events, et_event_dict = mne.events_from_annotations(et_raw)
-    #et_events = mne.find_events(et_raw, min_duration=0.01, shortest_event=1, uint_cast=True)
+    
+    #replace NaNs with 0s..
+    #data = et_raw.get_data()
+    #data[np.isnan(data)] = 0
+    #et_raw._data = data
+    
+    #resample..
+    #et_raw.resample(1000, npad="auto")
 
-    #et_raw_fresh=et_raw.copy() #make a fresh copy for later
-    et_raw_df = et_raw.to_data_frame()
+    #get the events from the annotation structure
+    #et_events, et_event_dict = mne.events_from_annotations(et_raw)
+
     #get the events from the annotation structure
     et_annot_events, et_annot_event_dict = mne.events_from_annotations(et_raw)
     #et_events = mne.find_events(et_raw, min_duration=0.01, shortest_event=1, uint_cast=True)
 
-    #read the raw et asc file again this time with the blinks annotation enabled.. (this should be combined into a single read) 
-    et_raw = mne.io.read_raw_eyelink(path,create_annotations=["blinks"])
-    et_raw.load_data()
-    data = et_raw.get_data()
-    data[np.isnan(data)] = 0
-    et_raw._data = data
-    et_raw.resample(1000, npad="auto")
+    if blink_interp:
+        #read the raw et asc file again this time with the blinks annotation enabled.. (this should be combined into a single read) 
+        et_raw = mne.io.read_raw_eyelink(path,create_annotations=["blinks"])
+        et_raw.load_data()
+
+        #interpolate the signals during blinks
+        mne.preprocessing.eyetracking.interpolate_blinks(et_raw, buffer=(0.05, 0.2), interpolate_gaze=True)
+    
+    if fill_nans:
+        #replace Nans with 0s..
+        data = et_raw.get_data()
+        data[np.isnan(data)] = 0
+        et_raw._data = data
+    
+    if resamp:
+        #resample the data..
+        et_raw.resample(1000, npad="auto")
+
+    #create the dataframe
+    et_raw_df = et_raw.to_data_frame()
    
-    #interpolate the signals during blinks
-    mne.preprocessing.eyetracking.interpolate_blinks(et_raw, buffer=(0.05, 0.2), interpolate_gaze=True)
 
     ##read the asc eye tracking data and convert it to a dataframe...
     #et_raw = mne.io.read_raw_eyelink(path)
@@ -385,8 +399,31 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
         eeg_events = eeg_events[~mask]
         new_events = np.empty((0, 3))
+        if 'TSYN' in eeg_event_dict:
+            del eeg_event_dict['TSYN']
 
-        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+
+        #filter the dictionary
+        filtered_dict = {k: v for k, v in eeg_event_dict.items() if not k.startswith('DIN') or k in din_str}
+        #reassign dict values sequentially
+        filtered_dict = {key: i + 1 for i, (key, _) in enumerate(filtered_dict.items())}
+
+        #update the events array
+        updated_events = np.array([
+            [row[0], row[1], filtered_dict[key]]
+            for row in eeg_events if (key := next((k for k, v in eeg_event_dict.items() if v == row[2]), None)) in filtered_dict
+        ])
+
+        #update eeg_event_dict and eeg_events
+        eeg_event_dict = filtered_dict
+        eeg_events = updated_events
+        # print result
+        print("Updated Dictionary:", eeg_event_dict)
+
+
+    
+    
+    # find the first DIN4 event following either mmns or mmnt events and add new *d events
         for i, e in np.ndenumerate(eeg_events[:,2]):
             if e == eeg_event_dict['plro']:
                 if i[0]+1 < len(eeg_events[:,2]):
@@ -755,6 +792,16 @@ def show_sync_offsets(eeg_stims,et_stims):
 
 
 
+#def eeg_clean_events(eeg_annot_event_dict, eeg_annot_events, task_id_out):
+
+#    if task_id_out == "PLR"
+    
+    
+    
+    
+    
+    return eeg_annot_event_dict, eeg_annot_events
+    
 def et_clean_events(et_annot_event_dict, et_annot_events):
 
     ##read the asc eye tracking data and convert it to a dataframe...
@@ -1050,6 +1097,58 @@ def et_task_events(et_raw_df, et_annot_event_dict, et_annot_events, task_id):
     return et_annot_event_dict, et_annot_events, et_raw_df
     
     
+def eeg_et_align(eeg_event_dict, et_event_dict, eeg_events, et_events, eeg_stims, et_stims, eeg_sfreq, et_sfreq):
+    eeg_times = eeg_stims[:, 0] / eeg_sfreq
+    et_times = et_stims[:, 0] / et_sfreq
+
+    n_eeg_times = len(eeg_times)
+    n_et_times = len(et_times)
+    
+    if n_eeg_times > n_et_times:
+        print("there are more eeg_times and there are et_times.. attempting align")
+        eeg_times = qit.times_align(eeg_times,et_times)
+    elif n_eeg_times < n_et_times:
+        print("there are more et_times and there are eeg_times.. attempting align")
+        et_times = qit.times_align(et_times,eeg_times)
+    else:
+        print("there are the same number of eeg_times and et_times.. continuing")
+        
+    #check if alignment was successfull..
+    n_eeg_times = len(eeg_times)
+    n_et_times = len(et_times)
+    if n_eeg_times != n_et_times:
+        print("EEG and ET times alignment was not successful... abandoning sync procedures...")
+        et_syn = False
+    else:
+        #create the sync_time events for the EEG and ET data.
+        #convert times to samples..
+        #eeg_samps = eeg_stims[:, 0]
+        #et_samps = et_stims[:, 0]
+        eeg_samps = eeg_times * eeg_sfreq / 1000        
+        et_samps = et_times * et_sfreq / 1000                
+        #add "sync_time" to the dictionary
+        eeg_event_dict['sync_time'] = len(eeg_event_dict) + 1
+        et_event_dict['sync_time'] = len(et_event_dict) + 1
+        #add rows to the events array for "sync_time"
+        eeg_sync_time_rows = [[samp, 0, eeg_event_dict['sync_time']] for samp in eeg_samps]
+        et_sync_time_rows = [[samp, 0, et_event_dict['sync_time']] for samp in et_samps]
+        #eeg_sync_time_rows = [[time, 0, eeg_event_dict['sync_time']] for time in eeg_times]
+        #et_sync_time_rows = [[time, 0, et_event_dict['sync_time']] for time in et_times]
+        #combine the new rows with the existing events
+        eeg_events = np.vstack([eeg_events, eeg_sync_time_rows])
+        eeg_events = eeg_events[eeg_events[:, 0].argsort()]  # Sort by the first column (time)
+        et_events = np.vstack([et_events, et_sync_time_rows])
+        et_events = et_events[et_events[:, 0].argsort()]  # Sort by the first column (time)
+
+        print("Updated EEG event dictionary:")
+        eeg_event_dict
+        
+    return eeg_event_dict, et_event_dict, eeg_events, et_events, eeg_times, et_times
+
+    
+    
+    
+    
     
 def eeg_et_combine(eeg_raw, et_raw, eeg_times, et_times, eeg_events, eeg_event_dict, et_events, et_event_dict):
 
@@ -1100,3 +1199,59 @@ def times_align(a_times, b_times):
     a_times = np.delete(a_times, index_to_remove)
     return a_times
     
+
+    
+def write_eeg(eeg_raw, eeg_event_dict, eeg_events, subject_id_out, session_id, task_id_out, project_path, device_info):
+    # write the BIDS output files
+    # specify power line frequency as required by BIDS
+    eeg_raw.info["line_freq"] = 60
+    eeg_raw.info['device_info']=device_info
+    eeg_raw.info['device_info']['type'] = eeg_raw.info['device_info']['type'].replace(' ', '-')
+
+    #THIS SHOULD BE MOVED TO QIT.FILLNA if it is needed...
+    def fillna(raw, fill_val=0):
+        return mne.io.RawArray(np.nan_to_num(raw.get_data(), nan=fill_val), raw.info)
+    eeg_raw=fillna(eeg_raw,fill_val=0)
+
+    eeg_bids_path = mne_bids.BIDSPath(
+        subject=subject_id_out, session=session_id, task=task_id_out, run="1", datatype="eeg", root=project_path
+    )
+
+    print(eeg_bids_path)
+    mne_bids.write_raw_bids(
+        raw=eeg_raw,
+        bids_path=eeg_bids_path,
+        events=eeg_events,
+        event_id=eeg_event_dict,
+        format = "EDF",
+        overwrite=True,
+        allow_preload=True,
+    )
+    
+    return eeg_bids_path
+    
+def write_et(et_raw, et_event_dict, et_events, eeg_bids_path):
+    event_id_to_name = {v: k for k, v in et_event_dict.items()}
+    onsets = et_events[:, 0] / et_raw.info['sfreq']  # Convert sample indices to time (in seconds)
+    durations = [0] * len(onsets)  # Example: all durations set to 0
+    descriptions = [event_id_to_name[event_id] for event_id in et_events[:, 2]]
+
+    annotations = mne.Annotations(onset=onsets, duration=durations, description=descriptions)
+
+    #overwrite the annotations in the Raw object
+    et_raw.set_annotations(annotations)
+
+    et_out_path = str(eeg_bids_path)
+    et_out_path = et_out_path.replace("/eeg/", "/et/")
+    et_out_path = et_out_path.replace("_eeg.edf", "_et.fif")
+    #et_out_path = et_out_path.split(".")[0] + ".fif"
+    # Extract the directory path
+    directory = os.path.dirname(et_out_path)
+
+    # Ensure the directory exists
+    os.makedirs(directory, exist_ok=True)
+
+    #write the updated Raw object to the specified path
+    et_raw.save(et_out_path, overwrite=True)
+
+    return et_out_path
