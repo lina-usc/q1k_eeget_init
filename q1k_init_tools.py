@@ -726,15 +726,16 @@ def et_task_events(et_raw_df, et_annot_event_dict, et_annot_events, task_id):
                 # Look for the first 'DIN2' within 1000 ms after this 'STIM'
                 for i in range(stim_index + 1, len(et_annot_events)):
                     din2_row = et_annot_events[i]
-                    if (
-                        din2_row[2] == et_annot_event_dict['DIN2'] and
-                        i not in used_indices and
-                        0 <= din2_row[0] - stim_time <= 1000
-                    ):
-                        stim_d_time = din2_row[0]  # Use 'DIN2' time directly
-                        new_rows.append([stim_d_time, 0, stim_d_value])
-                        used_indices.add(i)
-                        break
+                    if 'DIN2' in et_annot_event_dict:
+                        if (
+                            din2_row[2] == et_annot_event_dict['DIN2'] and
+                            i not in used_indices and
+                            0 <= din2_row[0] - stim_time <= 1000
+                        ):
+                            stim_d_time = din2_row[0]  # Use 'DIN2' time directly
+                            new_rows.append([stim_d_time, 0, stim_d_value])
+                            used_indices.add(i)
+                            break
 
                 # If no 'DIN2' is found, look for the first 'DIN4' and calculate midpoint if necessary
                 if stim_d_time is None:
