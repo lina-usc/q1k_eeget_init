@@ -40,7 +40,7 @@ def generate_session_ids (dataset_group, project_path, site_code, task_id_in, su
 
 
 def set_din_str (task_id_out):
-    # Create the task specific event string list
+    # Create the task specific event string list (basically.. visual tasks = ('DIN2','DIN3') and auditory tasks = ('DIN4','DIN5'))
     if task_id_out == 'AEP':
         event_dict_offset = 1
         din_str = ('DIN4','DIN5')
@@ -129,6 +129,7 @@ def et_read(path,blink_interp,fill_nans,resamp):
 
     if blink_interp:
         #read the raw et asc file again this time with the blinks annotation enabled.. (this should be combined into a single read) 
+        print("Interpolating blinks.")
         et_raw = mne.io.read_raw_eyelink(path,create_annotations=["blinks"])
         et_raw.load_data()
 
@@ -136,12 +137,14 @@ def et_read(path,blink_interp,fill_nans,resamp):
         mne.preprocessing.eyetracking.interpolate_blinks(et_raw, buffer=(0.05, 0.2), interpolate_gaze=True)
     
     if fill_nans:
+        print("Filling NaNs with zeros.")
         #replace Nans with 0s..
         data = et_raw.get_data()
         data[np.isnan(data)] = 0
         et_raw._data = data
     
     if resamp:
+        print("Resampling the data.")
         #resample the data..
         et_raw.resample(1000, npad="auto")
 
@@ -173,7 +176,7 @@ def get_event_dict(raw, events, offset):
                   for i, event in enumerate(stim_names)
                   if event != 'STI 014'}
 
-    """ #method for building building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
+    """ #method for building the event_dict is precarious, but it seems to satisfy all of the cases... to be reworked later
     if raw.info.ch_names[-1] == 'VBeg':
         print('VBeg method')
         adjuster = len(raw.info.ch_names) - 129 - events[0,2] # this assumes that 'VBeg' is the last stim channel and the first event in the recording.
@@ -201,15 +204,119 @@ def get_event_dict(raw, events, offset):
     return event_dict            
 
 
-def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
+def eeg_clean_events(eeg_events, eeg_event_dict, din_str):
+    
+    # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+    print('Removing TSYN events...')
+    mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+    eeg_events = eeg_events[~mask]
+    #new_events = np.empty((0, 3))
+    if 'TSYN' in eeg_event_dict:
+        del eeg_event_dict['TSYN']
+
+    #remove 'DIN*' events that are not included in din_str    
+    #filter the dictionary
+    filtered_dict = {k: v for k, v in eeg_event_dict.items() if not k.startswith('DIN') or k in din_str}
+    #reassign dict values sequentially
+    filtered_dict = {key: i + 1 for i, (key, _) in enumerate(filtered_dict.items())}
+    #update the events array
+    updated_events = np.array([
+        [row[0], row[1], filtered_dict[key]]
+        for row in eeg_events if (key := next((k for k, v in eeg_event_dict.items() if v == row[2]), None)) in filtered_dict
+    ])
+
+    #update eeg_event_dict and eeg_events
+    eeg_event_dict = filtered_dict
+    eeg_events = updated_events
+
+    # print result
+    print("Updated Dictionary:", eeg_event_dict)
+        
+    return eeg_events, eeg_event_dict
+
+
+
+def eeg_task_events(eeg_events, eeg_event_dict, din_str, task_name=None):
     
     din_offset = []
+    new_events = np.empty((0, 3))
     
     if not task_name:
         raise ValueError(f'please pass one of {VALID_TASKS}'
                          ' to the task_name keyword argument.')
 
-    if task_name == 'ap' or task_name == 'AEP':
+    ## handle visual DIN tasks
+    #if task_name == 'PLR' or task_name == 'VEP':
+        
+    if task_name == 'PLR':
+        #find the first din_str event following plro events and add new *d events
+        for i, e in np.ndenumerate(eeg_events[:,2]):
+            if e == eeg_event_dict['plro']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+        #append new events to eeg_events
+        eeg_events = np.concatenate((eeg_events,new_events))
+        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+        # add the new stimulus onset DIN labels to the event_dict..
+        eeg_event_dict['plro_d'] = len(eeg_event_dict) + 1
+
+        #select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['plro_d']])
+        eeg_stims = eeg_events[mask]
+        print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+
+        #calculate the inter trial interval between stimulus onset DIN events
+        eeg_iti = np.diff(eeg_stims[:,0])
+
+
+    elif task_name == 'VEP':
+
+        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+        for i, e in np.ndenumerate(eeg_events[:,2]):
+            if e == eeg_event_dict['sv06']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+                        if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
+                            cor_val = 166
+                        else:
+                            cor_val = 0
+                        new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 1]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+            if e == eeg_event_dict['sv15']:
+                if i[0]+1 < len(eeg_events[:,2]):
+                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+                        if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
+                            cor_val = 66
+                        else:
+                            cor_val = 0
+                        new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 2]])
+                        new_events = np.append(new_events,new_row, axis=0)
+                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+
+        # append new events to eeg_events
+        eeg_events = np.concatenate((eeg_events,new_events))
+        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+        # add the new stimulus onset DIN labels to the event_dict..
+        eeg_event_dict['sv06_d'] = len(eeg_event_dict) + 1
+        eeg_event_dict['sv15_d'] = len(eeg_event_dict) + 1
+
+        #select all of the newly categorized stimulus DIN events
+        mask = np.isin(eeg_events[:,2],[eeg_event_dict['sv06_d'],eeg_event_dict['sv15_d']])
+        eeg_stims = eeg_events[mask]
+        print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+
+        #calculate the inter trial interval between stimulus onset DIN events
+        eeg_iti = np.diff(eeg_stims[:,0])
+
+        
+        
+        
+    elif task_name == 'ap' or task_name == 'AEP':
 
         # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
         print('Removing TSYN events...')
@@ -346,105 +453,106 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
         #eeg_iti = np.diff(eeg_stims[:,0])
 
 
-    elif task_name == 'vp' or task_name == 'VEP':
+    #elif task_name == 'vp' or task_name == 'VEP':
 
-        # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
-        print('Removing TSYN events...')
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
-        eeg_events = eeg_events[~mask]
-        new_events = np.empty((0, 3))
+        ## remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+        #print('Removing TSYN events...')
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+        #eeg_events = eeg_events[~mask]
+        #new_events = np.empty((0, 3))
 
-        # find the first DIN4 event following either mmns or mmnt events and add new *d events
-        for i, e in np.ndenumerate(eeg_events[:,2]):
-            if e == eeg_event_dict['sv06']:
-                if i[0]+1 < len(eeg_events[:,2]):
-                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
-                        if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
-                            cor_val = 166
-                        else:
-                            cor_val = 0
-                        new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 1]])
-                        new_events = np.append(new_events,new_row, axis=0)
-                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
-            if e == eeg_event_dict['sv15']:
-                if i[0]+1 < len(eeg_events[:,2]):
-                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
-                        if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
-                            cor_val = 66
-                        else:
-                            cor_val = 0
-                        new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 2]])
-                        new_events = np.append(new_events,new_row, axis=0)
-                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+        ## find the first DIN4 event following either mmns or mmnt events and add new *d events
+        #for i, e in np.ndenumerate(eeg_events[:,2]):
+        #    if e == eeg_event_dict['sv06']:
+        #        if i[0]+1 < len(eeg_events[:,2]):
+        #            if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+        #                if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
+        #                    cor_val = 166
+        #                else:
+        #                    cor_val = 0
+        #                new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 1]])
+        #                new_events = np.append(new_events,new_row, axis=0)
+        #                din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+        #    if e == eeg_event_dict['sv15']:
+        #        if i[0]+1 < len(eeg_events[:,2]):
+        #            if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+        #                if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]] and din_str[1] == 'DIN3':
+        #                    cor_val = 66
+        #                else:
+        #                    cor_val = 0
+        #                new_row = np.array([[eeg_events[i[0] + 1, 0] - cor_val, 0, len(eeg_event_dict) + 2]])
+        #                new_events = np.append(new_events,new_row, axis=0)
+        #                din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
 
-        # append new events to eeg_events
-        eeg_events = np.concatenate((eeg_events,new_events))
-        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
-        # add the new stimulus onset DIN labels to the event_dict..
-        eeg_event_dict['sv06_d'] = len(eeg_event_dict) + 1
-        eeg_event_dict['sv15_d'] = len(eeg_event_dict) + 1
+        ## append new events to eeg_events
+        #eeg_events = np.concatenate((eeg_events,new_events))
+        #eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+        ## add the new stimulus onset DIN labels to the event_dict..
+        #eeg_event_dict['sv06_d'] = len(eeg_event_dict) + 1
+        #eeg_event_dict['sv15_d'] = len(eeg_event_dict) + 1
 
-        #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['sv06_d'],eeg_event_dict['sv15_d']])
-        eeg_stims = eeg_events[mask]
-        print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+        ##select all of the newly categorized stimulus DIN events
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['sv06_d'],eeg_event_dict['sv15_d']])
+        #eeg_stims = eeg_events[mask]
+        #print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
-        #calculate the inter trial interval between stimulus onset DIN events
-        eeg_iti = np.diff(eeg_stims[:,0])
+        ##calculate the inter trial interval between stimulus onset DIN events
+        #eeg_iti = np.diff(eeg_stims[:,0])
 
-    elif task_name == 'plr' or task_name == 'PLR':
+    #elif task_name == 'plr' or task_name == 'PLR':
 
-        # remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
-        print('Removing TSYN events...')
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
-        eeg_events = eeg_events[~mask]
-        new_events = np.empty((0, 3))
-        if 'TSYN' in eeg_event_dict:
-            del eeg_event_dict['TSYN']
+        ## remove TSYN events...this might have to happen for all tasks.. because this is not used for anything and they appear in arbitrary locations...
+        #print('Removing TSYN events...')
+        #mask = np.isin(eeg_events[:,2],[eeg_event_dict['TSYN']])
+        #eeg_events = eeg_events[~mask]
+        #new_events = np.empty((0, 3))
+        #if 'TSYN' in eeg_event_dict:
+        #    del eeg_event_dict['TSYN']
 
 
-        #filter the dictionary
-        filtered_dict = {k: v for k, v in eeg_event_dict.items() if not k.startswith('DIN') or k in din_str}
-        #reassign dict values sequentially
-        filtered_dict = {key: i + 1 for i, (key, _) in enumerate(filtered_dict.items())}
+        ##filter the dictionary
+        #filtered_dict = {k: v for k, v in eeg_event_dict.items() if not k.startswith('DIN') or k in din_str}
+        ##reassign dict values sequentially
+        #filtered_dict = {key: i + 1 for i, (key, _) in enumerate(filtered_dict.items())}
 
-        #update the events array
-        updated_events = np.array([
-            [row[0], row[1], filtered_dict[key]]
-            for row in eeg_events if (key := next((k for k, v in eeg_event_dict.items() if v == row[2]), None)) in filtered_dict
-        ])
+        ##update the events array
+        #updated_events = np.array([
+        #    [row[0], row[1], filtered_dict[key]]
+        #    for row in eeg_events if (key := next((k for k, v in eeg_event_dict.items() if v == row[2]), None)) in filtered_dict
+        #])
 
-        #update eeg_event_dict and eeg_events
-        eeg_event_dict = filtered_dict
-        eeg_events = updated_events
-        # print result
-        print("Updated Dictionary:", eeg_event_dict)
+        ##update eeg_event_dict and eeg_events
+        #eeg_event_dict = filtered_dict
+        #eeg_events = updated_events
+        ## print result
+        #print("Updated Dictionary:", eeg_event_dict)
 
 
     
     
-    # find the first DIN4 event following either mmns or mmnt events and add new *d events
-        for i, e in np.ndenumerate(eeg_events[:,2]):
-            if e == eeg_event_dict['plro']:
-                if i[0]+1 < len(eeg_events[:,2]):
-                    if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
-                        new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
-                        new_events = np.append(new_events,new_row, axis=0)
-                        din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
+    ## find the first din_str event following plro events and add new *d events
+    #    new_events = np.empty((0, 3))
+    #    for i, e in np.ndenumerate(eeg_events[:,2]):
+    #        if e == eeg_event_dict['plro']:
+    #            if i[0]+1 < len(eeg_events[:,2]):
+    #                if eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[0]] or eeg_events[i[0]+1, 2] == eeg_event_dict[din_str[1]]:
+    #                    new_row = np.array([[eeg_events[i[0] + 1, 0], 0, len(eeg_event_dict) + 1]])
+    #                    new_events = np.append(new_events,new_row, axis=0)
+    #                    din_offset.append(eeg_events[i[0]+1, 0] - eeg_events[i[0], 0])
 
-        # append new events to eeg_events
-        eeg_events = np.concatenate((eeg_events,new_events))
-        eeg_events = eeg_events[eeg_events[:,0].argsort()] 
-        # add the new stimulus onset DIN labels to the event_dict..
-        eeg_event_dict['plro_d'] = len(eeg_event_dict) + 1
+    #    # append new events to eeg_events
+    #    eeg_events = np.concatenate((eeg_events,new_events))
+    #    eeg_events = eeg_events[eeg_events[:,0].argsort()] 
+    #    # add the new stimulus onset DIN labels to the event_dict..
+    #    eeg_event_dict['plro_d'] = len(eeg_event_dict) + 1
 
-        #select all of the newly categorized stimulus DIN events
-        mask = np.isin(eeg_events[:,2],[eeg_event_dict['plro_d']])
-        eeg_stims = eeg_events[mask]
-        print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
+    #    #select all of the newly categorized stimulus DIN events
+    #    mask = np.isin(eeg_events[:,2],[eeg_event_dict['plro_d']])
+    #    eeg_stims = eeg_events[mask]
+    #    print('Number of stimulus onset DIN events: ' + str(len(eeg_stims))) #the length of this array should equal the number of stimulus trials in the task
 
-        #calculate the inter trial interval between stimulus onset DIN events
-        eeg_iti = np.diff(eeg_stims[:,0])
+    #    #calculate the inter trial interval between stimulus onset DIN events
+    #    eeg_iti = np.diff(eeg_stims[:,0])
 
         ## for the plr task it is more simple to select trials based on DIN2 occurences
         #mask = np.isin(eeg_events[:,2],[eeg_event_dict['DIN2']])
@@ -611,175 +719,19 @@ def eeg_event_test(eeg_events, eeg_event_dict, din_str, task_name=None):
                          f' Expected one of {VALID_TASKS} but got {task_name}')
 
 
+    #rename DIN* events to eeg_DIN*
+    renamed_dict = {
+        (f"eeg_{key}" if key.startswith('DIN') else key): value
+        for key, value in eeg_event_dict.items()
+    }
+    eeg_event_dict = renamed_dict
+
+    # print result
+    print("Updated Dictionary:", eeg_event_dict)
+
     return eeg_events, eeg_stims, eeg_iti, din_offset, eeg_event_dict, new_events
 
 
-def et_event_test(et_raw_df, task_name=''):
-
-    # fill NaNs in DIN channel with zeros
-    et_raw_df['DIN']=et_raw_df['DIN'].fillna(0)
-
-    # Correct blips to zero for a single sample while DIN8 is on.
-    for ind, row in et_raw_df.iterrows():
-        if ind < len(et_raw_df)-1:
-            if ind > 0:
-                if et_raw_df['DIN'][ind] == 0:
-                    if et_raw_df['DIN'][ind-1] == 8:
-                        if et_raw_df['DIN'][ind+1] == 8:
-                            et_raw_df['DIN'].loc[ind] = 8
-
-    # convert the ET DIN channel into ET events
-    # find when the DIN channel changes values
-    et_raw_df['DIN_diff']=et_raw_df['DIN'].diff()
-    # select all non-zero DIN changes
-    et_events=et_raw_df.loc[et_raw_df['DIN_diff']>0]
-
-    # there should only be DIN 2 and 4 in the Q1K visual tasks.. however there are frequently binary values greater than 4 indicating that there are anomalous pin4 and pin5 pulses
-    # bin2=pin2, bin4=pin3, bin8=pin4, bin16=pin5, bin18=pin2+pin5, bin20=pin3+pin5, bin24=pin4+pin5, bin26=pin2+pin4+pin5, bin28=pin3+pin4+pin5
-    # given these anomalous pin4 and pin5 pulses the conversion at pin change time is: binary 2,18,26 = 2, and binary 4,20,28 = 4
-
-    # perform the anomalous DIN conversion
-    et_events = et_events.copy()
-    et_events['DIN'].loc[et_events['DIN'].isin([2,18,26])] = 2
-    et_events['DIN'].loc[et_events['DIN'].isin([4,20,28])] = 4
-
-
-    if task_name == 'vp' or task_name == 'VEP':
-
-        #select only the DIN 2 and 4 rows.. and reset the index
-        et_events = et_events.copy()
-        et_events=et_events.loc[et_raw_df['DIN'].isin([2,4])]
-        et_events = et_events.reset_index()
-    
-        # Search for a DIN4 (fixation) followed by a DIN2 (stimulus) within 180 to 3000ms.
-        for ind, row in et_events.iterrows():
-            if et_events['DIN'][ind] == 4:
-                if ind < len(et_events)-1:
-                    if et_events['DIN'][ind+1] == 2:
-                        if et_events['index'][ind+1] - et_events['index'][ind] > 180:
-                            if et_events['index'][ind+1] - et_events['index'][ind] < 3000:
-                                et_events['DIN_diff'][ind+1] = 5
-                    if et_events['DIN'][ind+1] == 4:
-                        if et_events['index'][ind+1] - et_events['index'][ind] > 180:
-                            if et_events['index'][ind+1] - et_events['index'][ind] < 3000:
-                                et_events['DIN_diff'][ind+1] = 5
-
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([5])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-    if task_name=='ssaep':
-
-        #select only the DIN 8 rows.. and reset the index
-        et_events = et_events.copy()
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([8])]
-        et_events = et_events.reset_index()
-
-        # Search for the beginning of each stimulus sequence.. previous event is more than 300ms away and following stimulus is less than 300ms
-        for ind, row in et_events.iterrows():
-            if ind == 0:
-                et_events['DIN_diff'][ind] = 9
-            if ind > 0 and ind < len(et_events)-1:
-                if et_events['index'][ind] - et_events['index'][ind-1] > 300:
-                        et_events['DIN_diff'][ind] = 9
-
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([9])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-    if task_name=='plr' or task_name=='PLR':
-
-        #select only the DIN 2 rows.. and reset the index
-        et_events=et_events.loc[et_raw_df['DIN_diff'].isin([2,4])]
-        et_events = et_events.reset_index()
-    
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([2,4])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-    if task_name=='as':
-
-        et_events = et_events.copy()
-        et_events = et_events.reset_index()
-    
-        #Search for the DIN marker of the target stimulus, where where DIN4 is followed by DIN8 then DIN2.. replace the DIN2 with new mark..
-        for ind, row in et_events.iterrows():
-            if et_events['DIN_diff'][ind] == 4:
-                if ind < len(et_events)-2:
-                    if et_events['DIN_diff'][ind+1] == 8:
-                        if et_events['DIN_diff'][ind+2] == 2:
-                            et_events['DIN_diff'][ind+2] = 9
-
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([9])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-    if task_name=='go':
-
-        # correct anomalous din 12s
-        for ind, row in et_events.iterrows():
-            if et_events['DIN_diff'][ind] == 12:
-                et_events['DIN_diff'][ind] = 4
-
-        #select only the DIN 2 or 4 rows.. and reset the index
-        et_events = et_events.copy()
-        et_events=et_events.loc[et_raw_df['DIN_diff'].isin([2,4])]
-        et_events = et_events.reset_index()
-
-        for ind, row in et_events.iterrows():
-            if et_events['DIN_diff'][ind] == 4:
-                if ind > 0:
-                    if et_events['DIN_diff'][ind-1] == 2:
-                        if ind < len(et_events)-1:
-                            if et_events['DIN_diff'][ind+1] == 2:
-                                et_events['DIN_diff'][ind+1] = 3
-
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([3])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-
-    if task_name=='mmn':
-
-        #make a copy of et_events and reset the index
-        et_events = et_events.copy()
-        et_events = et_events.reset_index()
-    
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([8])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-
-    if task_name=='rest' or task_name=='RS':
-
-        #make a copy of et_events and reset the index
-        et_events = et_events.copy()
-        et_events = et_events.reset_index()
-    
-        for ind, row in et_events.iterrows():
-            if (ind % 2) != 0:
-                et_events['DIN_diff'][ind] = 3
-
-        et_stims=et_events.loc[et_events['DIN_diff'].isin([3])]
-        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
-
-        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
-        et_iti=et_stims['index'].diff()
-
-
-    return et_raw_df, et_events, et_stims, et_iti
 
 def show_sync_offsets(eeg_stims,et_stims):
     #eeg_et_offset = eeg_stims[:,0] - et_stims['index'][:]
@@ -794,13 +746,11 @@ def show_sync_offsets(eeg_stims,et_stims):
 
 #def eeg_clean_events(eeg_annot_event_dict, eeg_annot_events, task_id_out):
 
-#    if task_id_out == "PLR"
+#    if task_id_out == "PLR"   
+    
+#    return eeg_annot_event_dict, eeg_annot_events
     
     
-    
-    
-    
-    return eeg_annot_event_dict, eeg_annot_events
     
 def et_clean_events(et_annot_event_dict, et_annot_events):
 
@@ -1093,7 +1043,17 @@ def et_task_events(et_raw_df, et_annot_event_dict, et_annot_events, task_id):
         #sort the array by the first column for clarity (optional)
         et_annot_events = et_annot_events[et_annot_events[:, 0].argsort()]
 
-        
+
+    #rename DIN* events to eeg_DIN*
+    renamed_dict = {
+        (f"et_{key}" if key.startswith('DIN') else key): value
+        for key, value in et_annot_event_dict.items()
+    }
+    et_annot_event_dict = renamed_dict
+
+    # print result
+    print("Updated Dictionary:", et_annot_event_dict)
+    
     return et_annot_event_dict, et_annot_events, et_raw_df
     
     
@@ -1106,10 +1066,10 @@ def eeg_et_align(eeg_event_dict, et_event_dict, eeg_events, et_events, eeg_stims
     
     if n_eeg_times > n_et_times:
         print("there are more eeg_times and there are et_times.. attempting align")
-        eeg_times = qit.times_align(eeg_times,et_times)
+        eeg_times = times_align(eeg_times,et_times)
     elif n_eeg_times < n_et_times:
         print("there are more et_times and there are eeg_times.. attempting align")
-        et_times = qit.times_align(et_times,eeg_times)
+        et_times = times_align(et_times,eeg_times)
     else:
         print("there are the same number of eeg_times and et_times.. continuing")
         
@@ -1124,16 +1084,14 @@ def eeg_et_align(eeg_event_dict, et_event_dict, eeg_events, et_events, eeg_stims
         #convert times to samples..
         #eeg_samps = eeg_stims[:, 0]
         #et_samps = et_stims[:, 0]
-        eeg_samps = eeg_times * eeg_sfreq / 1000        
-        et_samps = et_times * et_sfreq / 1000                
-        #add "sync_time" to the dictionary
-        eeg_event_dict['sync_time'] = len(eeg_event_dict) + 1
-        et_event_dict['sync_time'] = len(et_event_dict) + 1
-        #add rows to the events array for "sync_time"
-        eeg_sync_time_rows = [[samp, 0, eeg_event_dict['sync_time']] for samp in eeg_samps]
-        et_sync_time_rows = [[samp, 0, et_event_dict['sync_time']] for samp in et_samps]
-        #eeg_sync_time_rows = [[time, 0, eeg_event_dict['sync_time']] for time in eeg_times]
-        #et_sync_time_rows = [[time, 0, et_event_dict['sync_time']] for time in et_times]
+        eeg_samps = eeg_times * eeg_sfreq        
+        et_samps = et_times * et_sfreq                
+        #add "*_sync_time" to the dictionary
+        eeg_event_dict['eeg_sync_time'] = len(eeg_event_dict) + 1
+        et_event_dict['et_sync_time'] = len(et_event_dict) + 1
+        #add rows to the events array for "*_sync_time"
+        eeg_sync_time_rows = [[samp, 0, eeg_event_dict['eeg_sync_time']] for samp in eeg_samps]
+        et_sync_time_rows = [[samp, 0, et_event_dict['et_sync_time']] for samp in et_samps]
         #combine the new rows with the existing events
         eeg_events = np.vstack([eeg_events, eeg_sync_time_rows])
         eeg_events = eeg_events[eeg_events[:, 0].argsort()]  # Sort by the first column (time)
@@ -1172,6 +1130,8 @@ def eeg_et_combine(eeg_raw, et_raw, eeg_times, et_times, eeg_events, eeg_event_d
     eeg_raw.set_annotations(eeg_annots)
 
     return eeg_raw
+
+
 
 def times_align(a_times, b_times):
 
@@ -1229,18 +1189,171 @@ def write_eeg(eeg_raw, eeg_event_dict, eeg_events, subject_id_out, session_id, t
     )
     
     return eeg_bids_path
+
+
+def et_events_to_annot(et_raw, et_event_dict, et_events):
     
-def write_et(et_raw, et_event_dict, et_events, eeg_bids_path):
-    event_id_to_name = {v: k for k, v in et_event_dict.items()}
-    onsets = et_events[:, 0] / et_raw.info['sfreq']  # Convert sample indices to time (in seconds)
-    durations = [0] * len(onsets)  # Example: all durations set to 0
-    descriptions = [event_id_to_name[event_id] for event_id in et_events[:, 2]]
+    et_event_dict_r = {value: key for key, value in et_event_dict.items()}
+    event_annotations = mne.annotations_from_events(
+        events=et_events,
+        event_desc=et_event_dict_r,
+        sfreq=et_raw.info['sfreq'],
+        orig_time=et_raw.info['meas_date']
+    )
 
-    annotations = mne.Annotations(onset=onsets, duration=durations, description=descriptions)
+    #filter existing annotations
+    existing_annotations = et_raw.annotations
+    selected_annotations = mne.Annotations(
+        onset=[
+            existing_annotations.onset[i]
+            for i, desc in enumerate(existing_annotations.description)
+            if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+        ],
+        duration=[
+            existing_annotations.duration[i]
+            for i, desc in enumerate(existing_annotations.description)
+            if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+        ],
+        description=[
+            desc for desc in existing_annotations.description if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+        ],
+        orig_time=existing_annotations.orig_time
+    )
 
-    #overwrite the annotations in the Raw object
-    et_raw.set_annotations(annotations)
+    #combine both annotation sets
+    combined_annotations = event_annotations + selected_annotations    #et_event_dict_r = {value: key for key, value in et_event_dict.items()}
 
+    
+    # Get all channel types and names
+    channel_types = et_raw.get_channel_types()
+    channel_names = et_raw.ch_names
+
+    # Find channels with types 'eyegaze' or 'pupil'
+    eyegaze_channels = [name for name, ch_type in zip(channel_names, channel_types) if ch_type == 'eyegaze']
+    pupil_channels = [name for name, ch_type in zip(channel_names, channel_types) if ch_type == 'pupil']
+
+    # Combine the lists if needed
+    eye_channels = tuple(eyegaze_channels + pupil_channels)
+
+    print("Eyegaze channels:", eyegaze_channels)
+    print("Pupil channels:", pupil_channels)
+    print("All eye channels:", eye_channels)
+
+    #eye_chans = ('xpos_left', 'ypos_left', 'pupil_left')        #event_annotations = mne.annotations_from_events(
+
+    combined_annotations.ch_names = np.array([
+        eye_channels if desc in ['fixation', 'saccade', 'BAD_blink', 'BAD_ACQ_SKIP'] else ()
+        for desc in combined_annotations.description
+    ], dtype=object)
+
+    #replace raw's annotations
+    et_raw.set_annotations(combined_annotations)    
+
+    
+    
+    #    events=et_events,
+    #    event_desc=et_event_dict_r,
+    #    sfreq=et_raw.info['sfreq'],
+    #    orig_time=et_raw.info['meas_date']
+    #)
+
+    ##filter existing annotations
+    #existing_annotations = et_raw.annotations
+    #selected_annotations = mne.Annotations(
+    #    onset=[
+    #        existing_annotations.onset[i]
+    #        for i, desc in enumerate(existing_annotations.description)
+    #        if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+    #    ],
+    #    duration=[
+    #        existing_annotations.duration[i]
+    #        for i, desc in enumerate(existing_annotations.description)
+    #        if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+    #    ],
+    #    description=[
+    #        desc for desc in existing_annotations.description if desc in ['BAD_blink', 'BAD_ACQ_SKIP']
+    #    ],
+    #    orig_time=existing_annotations.orig_time
+    #)
+
+    ##combine both annotation sets
+    #combined_annotations = event_annotations + selected_annotations
+
+    ## Get all channel types and names
+    #channel_types = et_raw.get_channel_types()
+    #channel_names = et_raw.ch_names
+
+    ## Find channels with types 'eyegaze' or 'pupil'
+    #eyegaze_channels = [name for name, ch_type in zip(channel_names, channel_types) if ch_type == 'eyegaze']
+    #pupil_channels = [name for name, ch_type in zip(channel_names, channel_types) if ch_type == 'pupil']
+
+    ## Combine the lists if needed
+    #eye_channels = eyegaze_channels + pupil_channels
+
+    #print("Eyegaze channels:", eyegaze_channels)
+    #print("Pupil channels:", pupil_channels)
+    #print("All eye channels:", eye_channels)
+    
+    ## Iterate through annotations and set 'ch_names' property for specified descriptions
+    #for i, desc in enumerate(combined_annotations.description):
+    #    if desc in ['fixation', 'saccade', 'BAD_Blink', 'BAD_ACQ_SKIP']:
+    #        combined_annotations.ch_names = eye_channels  # Set the 'ch_names' property
+
+    
+    ##replace raw's annotations
+    #et_raw.set_annotations(combined_annotations)
+
+    
+
+
+
+    #event_id_to_name = {v: k for k, v in et_event_dict.items()}
+    #onsets = et_events[:, 0] / et_raw.info['sfreq']  # Convert sample indices to time (in seconds)
+    #durations = [0] * len(onsets)  # Example: all durations set to 0
+    #descriptions = [event_id_to_name[event_id] for event_id in et_events[:, 2]]
+
+    #annotations = mne.Annotations(onset=onsets, duration=durations, description=descriptions)
+
+    ##overwrite the annotations in the Raw object
+    #et_raw.set_annotations(annotations)
+
+    ######
+    ## Identify the event codes for 'STIM_d' and 'sync_time'
+    #stim_d_code = et_event_dict.get('STIM_d')
+    #sync_time_code = et_event_dict.get('sync_time')
+
+    ## Ensure the event codes exist
+    #if stim_d_code is None or sync_time_code is None:
+    #    raise ValueError("Event codes for 'STIM_d' or 'sync_time' are missing in et_event_dict.")
+
+    ## Filter relevant events
+    #relevant_events = [event for event in et_events if event[2] in [stim_d_code, sync_time_code]]
+
+    ## Map event codes to descriptions
+    #code_to_description = {stim_d_code: 'STIM_d', sync_time_code: 'sync_time'}
+
+    ## Extract sampling frequency from raw data
+    #sfreq = et_raw.info['sfreq']
+
+    ## Convert events to annotations
+    #onset = [event[0] / sfreq for event in relevant_events]  # Convert samples to seconds
+    #duration = [0.0] * len(onset)  # Assume events are instantaneous
+    #description = [code_to_description[event[2]] for event in relevant_events]
+
+    ## Match orig_time with et_raw.annotations
+    #orig_time = et_raw.annotations.orig_time if et_raw.annotations else None
+
+    ## Create and add annotations
+    #new_annotations = mne.Annotations(onset=onset, duration=duration, description=description, orig_time=orig_time)
+    #et_raw.set_annotations(et_raw.annotations + new_annotations)
+
+    return et_raw
+
+
+
+def write_et(et_raw, eeg_bids_path):
+
+    
     et_out_path = str(eeg_bids_path)
     et_out_path = et_out_path.replace("/eeg/", "/et/")
     et_out_path = et_out_path.replace("_eeg.edf", "_et.fif")
@@ -1255,3 +1368,175 @@ def write_et(et_raw, et_event_dict, et_events, eeg_bids_path):
     et_raw.save(et_out_path, overwrite=True)
 
     return et_out_path
+
+
+
+
+''' this should be obsolete... replaced with et_clean_events and et_task_events...
+def et_event_test(et_raw_df, task_name=''):
+
+    # fill NaNs in DIN channel with zeros
+    et_raw_df['DIN']=et_raw_df['DIN'].fillna(0)
+
+    # Correct blips to zero for a single sample while DIN8 is on.
+    for ind, row in et_raw_df.iterrows():
+        if ind < len(et_raw_df)-1:
+            if ind > 0:
+                if et_raw_df['DIN'][ind] == 0:
+                    if et_raw_df['DIN'][ind-1] == 8:
+                        if et_raw_df['DIN'][ind+1] == 8:
+                            et_raw_df['DIN'].loc[ind] = 8
+
+    # convert the ET DIN channel into ET events
+    # find when the DIN channel changes values
+    et_raw_df['DIN_diff']=et_raw_df['DIN'].diff()
+    # select all non-zero DIN changes
+    et_events=et_raw_df.loc[et_raw_df['DIN_diff']>0]
+
+    # there should only be DIN 2 and 4 in the Q1K visual tasks.. however there are frequently binary values greater than 4 indicating that there are anomalous pin4 and pin5 pulses
+    # bin2=pin2, bin4=pin3, bin8=pin4, bin16=pin5, bin18=pin2+pin5, bin20=pin3+pin5, bin24=pin4+pin5, bin26=pin2+pin4+pin5, bin28=pin3+pin4+pin5
+    # given these anomalous pin4 and pin5 pulses the conversion at pin change time is: binary 2,18,26 = 2, and binary 4,20,28 = 4
+
+    # perform the anomalous DIN conversion
+    et_events = et_events.copy()
+    et_events['DIN'].loc[et_events['DIN'].isin([2,18,26])] = 2
+    et_events['DIN'].loc[et_events['DIN'].isin([4,20,28])] = 4
+
+
+    if task_name == 'vp' or task_name == 'VEP':
+
+        #select only the DIN 2 and 4 rows.. and reset the index
+        et_events = et_events.copy()
+        et_events=et_events.loc[et_raw_df['DIN'].isin([2,4])]
+        et_events = et_events.reset_index()
+    
+        # Search for a DIN4 (fixation) followed by a DIN2 (stimulus) within 180 to 3000ms.
+        for ind, row in et_events.iterrows():
+            if et_events['DIN'][ind] == 4:
+                if ind < len(et_events)-1:
+                    if et_events['DIN'][ind+1] == 2:
+                        if et_events['index'][ind+1] - et_events['index'][ind] > 180:
+                            if et_events['index'][ind+1] - et_events['index'][ind] < 3000:
+                                et_events['DIN_diff'][ind+1] = 5
+                    if et_events['DIN'][ind+1] == 4:
+                        if et_events['index'][ind+1] - et_events['index'][ind] > 180:
+                            if et_events['index'][ind+1] - et_events['index'][ind] < 3000:
+                                et_events['DIN_diff'][ind+1] = 5
+
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([5])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+    if task_name=='ssaep':
+
+        #select only the DIN 8 rows.. and reset the index
+        et_events = et_events.copy()
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([8])]
+        et_events = et_events.reset_index()
+
+        # Search for the beginning of each stimulus sequence.. previous event is more than 300ms away and following stimulus is less than 300ms
+        for ind, row in et_events.iterrows():
+            if ind == 0:
+                et_events['DIN_diff'][ind] = 9
+            if ind > 0 and ind < len(et_events)-1:
+                if et_events['index'][ind] - et_events['index'][ind-1] > 300:
+                        et_events['DIN_diff'][ind] = 9
+
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([9])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+    if task_name=='plr' or task_name=='PLR':
+
+        #select only the DIN 2 rows.. and reset the index
+        et_events=et_events.loc[et_raw_df['DIN_diff'].isin([2,4])]
+        et_events = et_events.reset_index()
+    
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([2,4])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+    if task_name=='as':
+
+        et_events = et_events.copy()
+        et_events = et_events.reset_index()
+    
+        #Search for the DIN marker of the target stimulus, where where DIN4 is followed by DIN8 then DIN2.. replace the DIN2 with new mark..
+        for ind, row in et_events.iterrows():
+            if et_events['DIN_diff'][ind] == 4:
+                if ind < len(et_events)-2:
+                    if et_events['DIN_diff'][ind+1] == 8:
+                        if et_events['DIN_diff'][ind+2] == 2:
+                            et_events['DIN_diff'][ind+2] = 9
+
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([9])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+    if task_name=='go':
+
+        # correct anomalous din 12s
+        for ind, row in et_events.iterrows():
+            if et_events['DIN_diff'][ind] == 12:
+                et_events['DIN_diff'][ind] = 4
+
+        #select only the DIN 2 or 4 rows.. and reset the index
+        et_events = et_events.copy()
+        et_events=et_events.loc[et_raw_df['DIN_diff'].isin([2,4])]
+        et_events = et_events.reset_index()
+
+        for ind, row in et_events.iterrows():
+            if et_events['DIN_diff'][ind] == 4:
+                if ind > 0:
+                    if et_events['DIN_diff'][ind-1] == 2:
+                        if ind < len(et_events)-1:
+                            if et_events['DIN_diff'][ind+1] == 2:
+                                et_events['DIN_diff'][ind+1] = 3
+
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([3])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+
+    if task_name=='mmn':
+
+        #make a copy of et_events and reset the index
+        et_events = et_events.copy()
+        et_events = et_events.reset_index()
+    
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([8])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+
+    if task_name=='rest' or task_name=='RS':
+
+        #make a copy of et_events and reset the index
+        et_events = et_events.copy()
+        et_events = et_events.reset_index()
+    
+        for ind, row in et_events.iterrows():
+            if (ind % 2) != 0:
+                et_events['DIN_diff'][ind] = 3
+
+        et_stims=et_events.loc[et_events['DIN_diff'].isin([3])]
+        print('Number of eye-tracking stimulus onset DIN events: ' + str(len(et_stims))) #the length of this array should equal the number of stimulus trials in the task.. and the length of eeg_stims
+
+        #calculate the inter trial interval between eye-tracking stimulus onset DIN events
+        et_iti=et_stims['index'].diff()
+
+
+    return et_raw_df, et_events, et_stims, et_iti
+'''
