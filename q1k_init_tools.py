@@ -110,11 +110,13 @@ def et_read(path,blink_interp,fill_nans,resamp):
     if blink_interp:
         #read the raw et asc file again this time with the blinks annotation enabled.. (this should be combined into a single read) 
         print("Interpolating blinks.")
+        #et_raw = mne.io.read_raw_eyelink(path,create_annotations=["blinks"])
         et_raw = mne.io.read_raw_eyelink(path,create_annotations=["blinks"])
         et_raw.load_data()
 
         #interpolate the signals during blinks
-        mne.preprocessing.eyetracking.interpolate_blinks(et_raw, buffer=(0.05, 0.2), interpolate_gaze=True)
+        #mne.preprocessing.eyetracking.interpolate_blinks(et_raw, match=('BAD_blink','BAD_ACQ_SKIP'),buffer=(0.05, 0.2), interpolate_gaze=True)
+        mne.preprocessing.eyetracking.interpolate_blinks(et_raw,buffer=(0.05, 0.2), interpolate_gaze=True)
     
     if fill_nans:
         print("Filling NaNs with zeros.")
@@ -241,7 +243,11 @@ def eeg_task_events(eeg_events, eeg_event_dict, din_str, task_name=None):
 
     elif task_name == 'VEP':
 
-        # find the first DIN4 event following either mmns or mmnt events and add new *d events
+        # find the first DIN3 event following either sv06 or sv15 events and add new *d events
+        # DIN3 is used here eventhough it is the second DIN in the visual stimulus inversion animations... 
+        # DIN3 is used because because it is more reliable that DIN2 at the HSJ site and its offset from the intial DIN2 event is exactly determined by stimulus condition
+        # This is handled differently it the et_task_event function.. but because the stimulus sequence is exactly deterministic these always line up in practice
+        # I would continue to keep an eye on this...
         for i, e in np.ndenumerate(eeg_events[:,2]):
             if e == eeg_event_dict['sv06']:
                 if i[0]+1 < len(eeg_events[:,2]):
